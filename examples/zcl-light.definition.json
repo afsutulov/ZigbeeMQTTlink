@@ -1,0 +1,37 @@
+{
+  "id": "example_zcl_light",
+  "models": [
+    "YOUR_MODEL_ID"
+  ],
+  "protocol": "zcl",
+  "endpoint": 1,
+  "properties": {
+    "state": {
+      "type": "enum",
+      "access": "rw",
+      "cluster": 6,
+      "attribute": 0,
+      "wire_type": 16,
+      "values": {
+        "OFF": 0,
+        "ON": 1
+      },
+      "command_ids": {
+        "OFF": 0,
+        "ON": 1,
+        "TOGGLE": 2
+      }
+    },
+    "brightness": {
+      "type": "integer",
+      "access": "rw",
+      "cluster": 8,
+      "attribute": 0,
+      "wire_type": 32,
+      "min": 0,
+      "max": 254,
+      "write_command": 4,
+      "payload_suffix_hex": "0000"
+    }
+  }
+}

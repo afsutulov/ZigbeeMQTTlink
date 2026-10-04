@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "devices": [
+    {
+      "id": "aqara_e1",
+      "models": [
+        "lumi.switch.b2nc01"
+      ],
+      "protocol": "builtin",
+      "builtin": "aqara_e1"
+    },
+    {
+      "id": "aqara_relay",
+      "models": [
+        "lumi.relay.c2acn01"
+      ],
+      "protocol": "builtin",
+      "builtin": "aqara_relay"
+    },
+    {
+      "id": "aqara_weather",
+      "models": [
+        "lumi.weather"
+      ],
+      "protocol": "builtin",
+      "builtin": "aqara_weather"
+    },
+    {
+      "id": "aqara_leak",
+      "models": [
+        "lumi.sensor_wleak.aq1"
+      ],
+      "protocol": "builtin",
+      "builtin": "aqara_leak"
+    },
+    {
+      "id": "aqara_button",
+      "models": [
+        "lumi.remote.b186acn02"
+      ],
+      "protocol": "builtin",
+      "builtin": "aqara_button"
+    },
+    {
+      "id": "tuya_plug",
+      "models": [
+        "TS011F"
+      ],
+      "protocol": "builtin",
+      "builtin": "tuya_plug"
+    },
+    {
+      "id": "tuya_climate",
+      "models": [
+        "TS0601"
+      ],
+      "protocol": "builtin",
+      "builtin": "tuya_climate",
+      "manufacturers": [
+        "_TZE200_bq5c8xfe",
+        "_TZE200_bjawzodf",
+        "_TZE200_qyflbnbj",
+        "_TZE200_44af8vyi",
+        "_TZE200_zl1kmjqx",
+        "_TZE204_qyflbnbj",
+        "_TZE284_qyflbnbj",
+        "_TZE200_yjjdcqsq",
+        "_TZE284_9yapgbuv",
+        "_TZE200_9yapgbuv",
+        "_TZE200_utkemkbs",
+        "_TZE204_utkemkbs",
+        "_TZE284_utkemkbs",
+        "_TZE204_9yapgbuv",
+        "_TZE204_upagmta9",
+        "_TZE200_cirvgep4",
+        "_TZE204_d7lpruvi",
+        "_TZE200_upagmta9",
+        "_TZE204_yjjdcqsq",
+        "_TZE204_jygvp6fk",
+        "_TZE204_cirvgep4",
+        "_TZE284_yjjdcqsq",
+        "_TZE200_d7lpruvi",
+        "_TZE284_hdyjyqjm",
+        "_TZE284_d7lpruvi",
+        "_TZE284_upagmta9",
+        "_TZE204_ksz749x8",
+        "_TZE204_1wnh8bqp",
+        "_TZE284_1wnh8bqp",
+        "_TZE284_ksz749x8",
+        "_TZE200_s1xgth2u",
+        "_TZE200_t3xd7l44",
+        "_TZE284_kdqrazmy",
+        "_TZE284_9ern5sfh"
+      ]
+    },
+    {
+      "id": "neo_nas_ab02b2",
+      "models": [
+        "TS0601"
+      ],
+      "manufacturers": [
+        "_TZE200_t1blo2bj",
+        "_TZE204_t1blo2bj",
+        "_TZE204_q76rtoa9"
+      ],
+      "protocol": "tuya",
+      "endpoint": 1,
+      "properties": {
+        "alarm": {
+          "type": "boolean",
+          "access": "rw",
+          "datapoint": 13,
+          "wire_type": 1
+        },
+        "melody": {
+          "type": "integer",
+          "access": "rw",
+          "datapoint": 21,
+          "wire_type": 4,
+          "min": 1,
+          "max": 18,
+          "numeric_string": true
+        },
+        "volume": {
+          "type": "enum",
+          "access": "rw",
+          "datapoint": 5,
+          "wire_type": 4,
+          "values": {
+            "low": 0,
+            "medium": 1,
+            "high": 2
+          }
+        },
+        "duration": {
+          "type": "integer",
+          "access": "rw",
+          "datapoint": 7,
+          "wire_type": 2,
+          "min": 0,
+          "max": 1800
+        },
+        "battpercentage": {
+          "type": "number",
+          "access": "r",
+          "datapoint": 15,
+          "wire_type": 2,
+          "min": 0,
+          "max": 100
+        }
+      },
+      "command_order": [
+        "melody",
+        "volume",
+        "duration",
+        "alarm"
+      ],
+      "stop_first": "alarm",
+      "inter_command_delay_ms": 50,
+      "configure": [
+        {
+          "kind": "read",
+          "endpoint": 1,
+          "cluster": 0,
+          "attributes": [
+            4,
+            0,
+            1,
+            5,
+            7,
+            65534
+          ]
+        },
+        {
+          "kind": "tuya_query",
+          "endpoint": 1
+        }
+      ],
+      "gateway_status": true
+    }
+  ]
+}

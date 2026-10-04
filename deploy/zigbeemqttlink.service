@@ -1,0 +1,25 @@
+[Unit]
+Description=ZigbeeMQTTlink smart home Zigbee MQTT service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+SupplementaryGroups=dialout
+WorkingDirectory=/opt
+ExecStart=/opt/zigbeemqttlink -config /etc/SmartHome/zigbeemqttlink.conf
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=40
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/zigbeemqttlink
+# Create user zigbeemqttlink; give it write access to the DB, definitions and logs.
+# Adjust ReadWritePaths if config points outside /opt/zigbeemqttlink.
+# The coordinator's serial device must be accessible via the dialout group.
+
+[Install]
+WantedBy=multi-user.target

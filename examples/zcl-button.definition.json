@@ -1,0 +1,36 @@
+{
+  "id": "example_button",
+  "models": [
+    "YOUR_BUTTON_MODEL"
+  ],
+  "protocol": "zcl",
+  "events": [
+    {
+      "endpoint": 1,
+      "cluster": 6,
+      "command": 1,
+      "payload_hex": "",
+      "state": {
+        "action": "on"
+      }
+    },
+    {
+      "endpoint": 1,
+      "cluster": 6,
+      "command": 0,
+      "payload_hex": "",
+      "state": {
+        "action": "off"
+      }
+    },
+    {
+      "endpoint": 1,
+      "cluster": 6,
+      "command": 2,
+      "payload_hex": "",
+      "state": {
+        "action": "toggle"
+      }
+    }
+  ]
+}

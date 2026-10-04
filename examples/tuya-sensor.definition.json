@@ -1,0 +1,33 @@
+{
+  "id": "example_tuya_sensor",
+  "models": [
+    "TS0601"
+  ],
+  "manufacturers": [
+    "YOUR_EXACT_MANUFACTURER"
+  ],
+  "protocol": "tuya",
+  "endpoint": 1,
+  "time_epoch": "1970",
+  "properties": {
+    "temperature": {
+      "type": "number",
+      "access": "r",
+      "datapoint": 1,
+      "wire_type": 2,
+      "scale": 0.1,
+      "signed": true,
+      "min": -65,
+      "max": 100
+    },
+    "humidity": {
+      "type": "number",
+      "access": "r",
+      "datapoint": 2,
+      "wire_type": 2,
+      "scale": 0.1,
+      "min": 0,
+      "max": 100
+    }
+  }
+}

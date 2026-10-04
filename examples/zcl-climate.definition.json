@@ -1,0 +1,30 @@
+{
+  "id": "example_temperature",
+  "models": [
+    "YOUR_SENSOR_MODEL"
+  ],
+  "protocol": "zcl",
+  "endpoint": 1,
+  "properties": {
+    "temperature": {
+      "type": "number",
+      "access": "r",
+      "cluster": 1026,
+      "attribute": 0,
+      "wire_type": 41,
+      "scale": 0.01,
+      "min": -65,
+      "max": 100
+    },
+    "humidity": {
+      "type": "number",
+      "access": "r",
+      "cluster": 1029,
+      "attribute": 0,
+      "wire_type": 33,
+      "scale": 0.01,
+      "min": 0,
+      "max": 100
+    }
+  }
+}
