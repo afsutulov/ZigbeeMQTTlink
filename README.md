@@ -2,8 +2,6 @@
 
 **English** · [Русский](README.ru.md)
 
-Version **0.3.3**. See [0.3.3 audit and corrections](REVIEW-0.3.3.ru.md), [0.3.2 audit](REVIEW-0.3.2.ru.md), [0.3.1 audit and corrections](REVIEW-0.3.1.ru.md), [network formation, backup and restore](REVIEW-0.3.0.ru.md), [0.2.5 audit and fixes](REVIEW-0.2.5.ru.md), [0.2.4 audit and fixes](REVIEW-0.2.4.ru.md), [0.2.3 audit and fixes](REVIEW-0.2.3.ru.md), [0.2.2 changes](REVIEW-0.2.2.ru.md) and [0.2.1 review](REVIEW.ru.md) for the production assessment, fixes, validation and deployment acceptance steps.
-
 A service connecting an existing Zigbee network to MQTT, with a built-in web interface, a JSON device database and device definitions that can be updated without recompiling.
 
 ZigbeeMQTTlink communicates directly with a **TI Z-Stack coordinator** over UART or TCP. Node.js and Zigbee2MQTT are not required at runtime. Your scripts consume device reports and issue commands through MQTT; automation rules remain in those scripts.
