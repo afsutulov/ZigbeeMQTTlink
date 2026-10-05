@@ -1,11 +1,11 @@
 package device
 
 import (
-	"zigbeemqttlink/internal/store"
-	"zigbeemqttlink/internal/zcl"
 	"encoding/binary"
 	"fmt"
 	"time"
+	"zigbeemqttlink/internal/store"
+	"zigbeemqttlink/internal/zcl"
 )
 
 func (r *Registry) TimeResponse(d store.Device, f zcl.Frame, now time.Time) ([]byte, error) {

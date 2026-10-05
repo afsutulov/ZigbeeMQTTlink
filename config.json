@@ -2,8 +2,9 @@
   "version": 1,
   "database": "devices.json",
   "device_definitions": "device-definitions.json",
+  "coordinator_backup": "coordinator_backup.json",
   "mqtt": {
-    "server": "mqtt://192.168.1.2:1883",
+    "server": "mqtt://localhost:1883",
     "base_topic": "zigbee2mqtt",
     "client_id": "zigbeemqttlink",
     "user": "user",
@@ -15,11 +16,13 @@
   },
   "web": {
     "enabled": true,
-    "listen": "0.0.0.0:8080"
+    "listen": "0.0.0.0:8080",
+    "user": "admin",
+    "password": "CHANGE_ME"
   },
   "logging": {
-    "level": "error",
-    "file": "/var/log/SmartHome/zigbeemqttlink.log",
+    "level": "info",
+    "file": "logs/zigbeemqttlink.log",
     "console": true,
     "max_size_mb": 10,
     "backups": 3

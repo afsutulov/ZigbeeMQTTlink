@@ -27,6 +27,10 @@ func (f Frame) Bytes() ([]byte, error) {
 
 var ErrFCS = errors.New("ZNP checksum mismatch")
 
+// ErrLength reports an impossible MT length byte (line noise or a lost SOF).
+// Like ErrFCS it is recoverable: the reader resynchronises on the next SOF.
+var ErrLength = errors.New("invalid ZNP length")
+
 func ReadFrame(r io.Reader) (Frame, error) {
 	var one [1]byte
 	for {
@@ -38,12 +42,23 @@ func ReadFrame(r io.Reader) (Frame, error) {
 		}
 	}
 	var header [3]byte
-	if _, e := io.ReadFull(r, header[:]); e != nil {
+	// Validate length before consuming command bytes: they may be the next SOF.
+	if _, e := io.ReadFull(r, header[:1]); e != nil {
 		return Frame{}, e
+	}
+	// A length byte of 0xFE is never valid (max 250), but it is the SOF of the
+	// next frame when a noise byte 0xFE preceded it: restart the frame there.
+	for header[0] == 0xfe {
+		if _, e := io.ReadFull(r, header[:1]); e != nil {
+			return Frame{}, e
+		}
 	}
 	n := int(header[0])
 	if n > 250 {
-		return Frame{}, fmt.Errorf("invalid ZNP length %d", n)
+		return Frame{}, fmt.Errorf("%w %d", ErrLength, n)
+	}
+	if _, e := io.ReadFull(r, header[1:]); e != nil {
+		return Frame{}, e
 	}
 	data := make([]byte, n+1)
 	if _, e := io.ReadFull(r, data); e != nil {

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"zigbeemqttlink/internal/config"
 	"zigbeemqttlink/internal/store"
 )
 
@@ -26,7 +27,7 @@ func parseCommand(topic string, body []byte) (string, string, map[string]any, er
 		}
 		p = map[string]any{m[3]: value}
 	} else {
-		if json.Unmarshal(body, &p) != nil || p == nil {
+		if config.StrictJSON(body, &p) != nil || p == nil {
 			state := strings.ToUpper(strings.TrimSpace(string(body)))
 			if state != "ON" && state != "OFF" && state != "TOGGLE" {
 				return "", "", nil, fmt.Errorf("payload must be a JSON object or ON/OFF/TOGGLE")

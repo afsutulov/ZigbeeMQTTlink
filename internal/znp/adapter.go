@@ -2,8 +2,6 @@ package znp
 
 import (
 	"context"
-	"zigbeemqttlink/internal/config"
-	"zigbeemqttlink/internal/store"
 	"encoding/binary"
 	"fmt"
 	"go.bug.st/serial"
@@ -13,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"zigbeemqttlink/internal/config"
+	"zigbeemqttlink/internal/store"
 )
 
 const SYS byte = 1
@@ -30,15 +30,68 @@ func Addr(b []byte) string {
 	return fmt.Sprintf("0x%016x", le.Uint64(b))
 }
 
+// maxInFlight limits concurrent AF_DATA_REQUESTs awaiting AF_DATA_CONFIRM.
+// Z-Stack buffers several requests; a slow sleeping device must not block
+// commands to every other device, as a global mutex did.
+const maxInFlight = 4
+
 type Adapter struct {
 	ExpectedIEEE string
 	C            *Client
-	sendMu       sync.Mutex
+	transMu      sync.Mutex
+	inFlight     chan struct{}
 	trans        byte
+	transactions [256]transactionSlot // guarded by transMu
 	IEEE         string
 	PAN          uint16
 	Channel      byte
 	Product      byte
+}
+
+type transactionSlot struct {
+	active bool
+	after  time.Time
+}
+
+// Reserve IDs while requests are active. Quarantine unconfirmed IDs for
+// 30 seconds so a late AF_DATA_CONFIRM cannot acknowledge a new command.
+func (a *Adapter) reserveTransaction(ctx context.Context) (byte, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		now := time.Now()
+		a.transMu.Lock()
+		for i := 0; i < 256; i++ {
+			a.trans++
+			id := a.trans
+			if slot := &a.transactions[id]; !slot.active && !now.Before(slot.after) {
+				slot.active = true
+				a.transMu.Unlock()
+				return id, nil
+			}
+		}
+		a.transMu.Unlock()
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return 0, ctx.Err()
+		case <-a.C.Done():
+			timer.Stop()
+			return 0, a.C.Err()
+		}
+	}
+}
+
+func (a *Adapter) releaseTransaction(id byte, confirmed bool) {
+	a.transMu.Lock()
+	defer a.transMu.Unlock()
+	a.transactions[id].active = false
+	if !confirmed {
+		a.transactions[id].after = time.Now().Add(30 * time.Second)
+	}
 }
 
 func Open(ctx context.Context, s config.Serial) (*Adapter, error) {
@@ -52,7 +105,7 @@ func Open(ctx context.Context, s config.Serial) (*Adapter, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Adapter{C: New(rw)}, nil
+	return &Adapter{C: New(rw), inFlight: make(chan struct{}, maxInFlight)}, nil
 }
 func (a *Adapter) Start(ctx context.Context) error {
 	f, e := a.C.Request(ctx, SYS, 2, nil)
@@ -76,7 +129,7 @@ func (a *Adapter) Start(ctx context.Context) error {
 		return e
 	}
 	if len(f.Data) != 3 || f.Data[0] != 0 || f.Data[1] != 1 || f.Data[2] != 0x55 {
-		return fmt.Errorf("coordinator has no recognised existing network; formation/restoration is not implemented")
+		return fmt.Errorf("coordinator has no ready network: run once with -form-network to create a new one or -restore <backup.json> to restore one; after an interrupted restore repeat -restore with the same backup; after interrupted formation inspect/back up the stored network, or deliberately replace it with -form-network -force")
 	}
 	f, e = a.C.Request(ctx, UTIL, 0, nil)
 	if e != nil {
@@ -172,15 +225,14 @@ func (a *Adapter) PermitJoin(ctx context.Context, seconds byte) error {
 }
 
 func (a *Adapter) Leave(ctx context.Context, d store.Device) error {
-	if !config.IEEE(d.IEEE) {
-		return fmt.Errorf("invalid IEEE address")
+	if d.Network >= 0xfff8 {
+		return fmt.Errorf("network address unknown; use force=true to forget the device locally")
 	}
-	id, e := strconv.ParseUint(d.IEEE[2:], 16, 64)
+	id, e := ieeeBytes(d.IEEE)
 	if e != nil {
 		return e
 	}
-	p := append(U16(d.Network), make([]byte, 8)...)
-	le.PutUint64(p[2:10], id)
+	p := append(U16(d.Network), id...)
 	p = append(p, 0)
 	f, e := a.C.Request(ctx, ZDO, 0x34, p)
 	if e != nil {
@@ -241,13 +293,26 @@ func ParseDescriptor(b []byte) (store.Endpoint, error) {
 	return ep, nil
 }
 func (a *Adapter) Send(ctx context.Context, n uint16, ep byte, cluster uint16, zcl []byte) error {
-	a.sendMu.Lock()
-	defer a.sendMu.Unlock()
-	if ep == 0 || ep > 240 || n >= 0xfff8 || len(zcl) > 240 {
+	if ep == 0 || ep > 240 || n == 0 || n >= 0xfff8 || len(zcl) > 240 {
+		if n == UnknownNetwork {
+			return fmt.Errorf("network address unknown; wait for the device to announce itself")
+		}
 		return fmt.Errorf("invalid AF destination/payload")
 	}
-	a.trans++
-	id := a.trans
+	select {
+	case a.inFlight <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-a.C.Done():
+		return a.C.Err()
+	}
+	defer func() { <-a.inFlight }()
+	id, e := a.reserveTransaction(ctx)
+	if e != nil {
+		return e
+	}
+	confirmed := false
+	defer func() { a.releaseTransaction(id, confirmed) }()
 	p := append(U16(n), ep, 1)
 	p = append(p, U16(cluster)...)
 	p = append(p, id, 0x10, 30, byte(len(zcl)))
@@ -256,6 +321,7 @@ func (a *Adapter) Send(ctx context.Context, n uint16, ep byte, cluster uint16, z
 	if e != nil {
 		return e
 	}
+	confirmed = true
 	return Status(f)
 }
 
@@ -292,6 +358,78 @@ func ParseIncoming(b []byte) (Incoming, error) {
 	return in, nil
 }
 
+// UnknownNetwork marks a device whose short address was taken over by another
+// device; it becomes valid again on the next device announce.
+const UnknownNetwork uint16 = 0xfffe
+
+// Bind asks the device to bind cluster reports from ep to the coordinator endpoint 1
+// (ZDO_BIND_REQ / ZDO_BIND_RSP).
+func (a *Adapter) Bind(ctx context.Context, n uint16, deviceIEEE string, ep byte, cluster uint16) error {
+	if n == 0 || n >= 0xfff8 || ep == 0 || ep > 240 {
+		return fmt.Errorf("invalid bind source")
+	}
+	src, e := ieeeBytes(deviceIEEE)
+	if e != nil {
+		return e
+	}
+	dst, e := ieeeBytes(a.IEEE)
+	if e != nil {
+		return fmt.Errorf("coordinator IEEE unknown: %w", e)
+	}
+	p := append(U16(n), src...)
+	p = append(p, ep)
+	p = append(p, U16(cluster)...)
+	p = append(p, 3) // Addr64Bit
+	p = append(p, dst...)
+	p = append(p, 1)
+	f, e := a.C.Exchange(ctx, ZDO, 0x21, p, ZDO, 0xa1, func(b []byte) bool { return len(b) >= 3 && le.Uint16(b[:2]) == n })
+	if e != nil {
+		return e
+	}
+	if len(f.Data) < 3 || f.Data[2] != 0 {
+		return fmt.Errorf("bind rejected by device")
+	}
+	return nil
+}
+
+// IEEEAddress asks the device at short address n for its IEEE address
+// (ZDO_IEEE_ADDR_REQ / ZDO_IEEE_ADDR_RSP). It recovers the mapping of a
+// device whose short address changed while its announce was missed.
+func (a *Adapter) IEEEAddress(ctx context.Context, n uint16) (string, error) {
+	if n == 0 || n >= 0xfff8 {
+		return "", fmt.Errorf("invalid network address")
+	}
+	p := append(U16(n), 0, 0) // single device response, start index 0
+	f, e := a.C.Exchange(ctx, ZDO, 1, p, ZDO, 0x81, func(b []byte) bool {
+		return len(b) >= 11 && le.Uint16(b[9:11]) == n
+	})
+	if e != nil {
+		return "", e
+	}
+	if f.Data[0] != 0 {
+		return "", fmt.Errorf("IEEE address request status 0x%02x", f.Data[0])
+	}
+	id := Addr(f.Data[1:9])
+	if !config.IEEE(id) {
+		return "", fmt.Errorf("invalid IEEE address in response")
+	}
+	return id, nil
+}
+
+func ieeeBytes(s string) ([]byte, error) {
+	if !config.IEEE(s) {
+		return nil, fmt.Errorf("invalid IEEE address")
+	}
+	id, e := strconv.ParseUint(s[2:], 16, 64)
+	if e != nil {
+		return nil, e
+	}
+	b := make([]byte, 8)
+	le.PutUint64(b, id)
+	return b, nil
+}
+
+func (a *Adapter) Dropped() uint64       { return a.C.Dropped() }
 func (a *Adapter) Events() <-chan Frame  { return a.C.Events() }
 func (a *Adapter) Done() <-chan struct{} { return a.C.Done() }
 func (a *Adapter) Err() error            { return a.C.Err() }

@@ -1,13 +1,13 @@
 package zcl
 
 import (
-	"zigbeemqttlink/internal/store"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"unicode/utf8"
+	"zigbeemqttlink/internal/store"
 )
 
 var le = binary.LittleEndian
@@ -333,6 +333,15 @@ type Command struct {
 	ID           byte
 	Payload      []byte
 	Manufacturer uint16
+	// Bind is not a ZCL frame: it asks the bridge to send ZDO_BIND_REQ for
+	// Cluster on Endpoint towards the coordinator.
+	Bind bool
+}
+
+// AnalogType reports whether a ZCL data type carries a "reportable change"
+// field in Configure Reporting (unsigned/signed integers, floats, time).
+func AnalogType(t byte) bool {
+	return t >= 0x20 && t <= 0x2f || t >= 0x38 && t <= 0x3a || t >= 0xe0 && t <= 0xe2
 }
 
 func endpoint(d store.Device, cluster uint16) (byte, error) {

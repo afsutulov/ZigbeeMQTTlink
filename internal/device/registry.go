@@ -23,6 +23,7 @@ type Manifest struct {
 }
 type Definition struct {
 	ID                  string              `json:"id"`
+	Description         string              `json:"description,omitempty"` // shown in the web panel
 	Models              []string            `json:"models"`
 	Manufacturers       []string            `json:"manufacturers,omitempty"`
 	Protocol            string              `json:"protocol"` // builtin, zcl, tuya
@@ -68,7 +69,7 @@ type Event struct {
 	State        map[string]any `json:"state"`
 }
 type Action struct {
-	Kind         string   `json:"kind"` // read, write, command, tuya_query
+	Kind         string   `json:"kind"` // read, write, command, tuya_query, bind, report
 	Endpoint     byte     `json:"endpoint,omitempty"`
 	Cluster      uint16   `json:"cluster,omitempty"`
 	Attributes   []uint16 `json:"attributes,omitempty"`
@@ -78,9 +79,15 @@ type Action struct {
 	WireType     byte     `json:"wire_type,omitempty"`
 	Value        any      `json:"value,omitempty"`
 	Manufacturer uint16   `json:"manufacturer_code,omitempty"`
+	// report: Configure Reporting intervals in seconds and reportable change
+	// (raw wire units; required only for analog types, defaults to 1).
+	MinInterval *uint16  `json:"min_interval,omitempty"`
+	MaxInterval *uint16  `json:"max_interval,omitempty"`
+	Change      *float64 `json:"change,omitempty"`
 }
 type Registry struct {
 	mu       sync.RWMutex
+	writeMu  sync.Mutex
 	path     string
 	manifest Manifest
 }
@@ -102,8 +109,8 @@ func Parse(b []byte) (Manifest, error) {
 	return m, validate(m)
 }
 func (r *Registry) Reload() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	b, e := os.ReadFile(r.path)
 	if e != nil {
 		return e
@@ -112,7 +119,9 @@ func (r *Registry) Reload() error {
 	if e != nil {
 		return e
 	}
+	r.mu.Lock()
 	r.manifest = m
+	r.mu.Unlock()
 	return nil
 }
 func (r *Registry) Snapshot() Manifest {
@@ -132,12 +141,14 @@ func (r *Registry) Save(b []byte) error {
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	if err = store.AtomicWrite(r.path, append(canonical, '\n')); err != nil {
 		return err
 	}
+	r.mu.Lock()
 	r.manifest = m
+	r.mu.Unlock()
 	return nil
 }
 func contains(a []string, s string) bool {
@@ -211,7 +222,7 @@ func validate(m Manifest) error {
 			return fmt.Errorf("%s: protocol must be builtin/zcl/tuya", d.ID)
 		}
 		for name, ep := range d.Channels {
-			if !config.Name(name) || ep == 0 || ep > 240 {
+			if !config.Name(name) || strings.Contains(name, "/") || ep == 0 || ep > 240 {
 				return fmt.Errorf("%s: invalid channel", d.ID)
 			}
 		}
@@ -385,7 +396,7 @@ func (r *Registry) Description(d store.Device) map[string]any {
 	if p == nil {
 		return map[string]any{"id": "standard_zcl", "protocol": "zcl"}
 	}
-	return map[string]any{"id": p.ID, "protocol": p.Protocol, "properties": p.Properties, "stop_first": p.StopFirst, "configurable": r.HasConfigure(d)}
+	return map[string]any{"id": p.ID, "description": p.Description, "protocol": p.Protocol, "properties": p.Properties, "stop_first": p.StopFirst, "configurable": r.HasConfigure(d)}
 }
 func canonical(d store.Device, p *Definition) store.Device {
 	if p.Protocol == "builtin" {
@@ -457,10 +468,37 @@ func action(d store.Device, a Action, defaultEP byte, validateOnly bool) (zcl.Co
 		c.Cluster = 0xef00
 		c.Control = 0x11
 		c.ID = 3
+	case "bind":
+		c.Bind = true
+	case "report":
+		if a.Attribute == nil || !zcl.ScalarType(a.WireType) || a.MinInterval == nil || a.MaxInterval == nil {
+			return c, fmt.Errorf("report requires attribute, wire_type, min_interval and max_interval")
+		}
+		if *a.MaxInterval != 0xffff && *a.MaxInterval != 0 && *a.MinInterval > *a.MaxInterval {
+			return c, fmt.Errorf("report min_interval exceeds max_interval")
+		}
+		c.ID = 6
+		c.Payload = []byte{0, byte(*a.Attribute), byte(*a.Attribute >> 8), a.WireType, byte(*a.MinInterval), byte(*a.MinInterval >> 8), byte(*a.MaxInterval), byte(*a.MaxInterval >> 8)}
+		if zcl.AnalogType(a.WireType) {
+			change := 1.0
+			if a.Change != nil {
+				change = *a.Change
+			}
+			if !finite(change) || change < 0 {
+				return c, fmt.Errorf("report change must be finite and non-negative")
+			}
+			data, err := zcl.EncodeScalar(a.WireType, change)
+			if err != nil {
+				return c, fmt.Errorf("report change: %w", err)
+			}
+			c.Payload = append(c.Payload, data...)
+		} else if a.Change != nil {
+			return c, fmt.Errorf("report change applies only to analog types")
+		}
 	default:
 		return c, fmt.Errorf("unknown configure kind")
 	}
-	if len(c.Payload) > 240 {
+	if !c.Bind && len(zcl.Wire(c, 0)) > 240 {
 		return c, fmt.Errorf("configure payload too large")
 	}
 	if !validateOnly {

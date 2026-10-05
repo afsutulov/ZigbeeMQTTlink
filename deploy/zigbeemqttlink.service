@@ -1,25 +1,45 @@
+# ZigbeeMQTTlink systemd unit.
+#
+# Layout: binary, config, database, definitions and logs live in
+# /opt/zigbeemqttlink (paths in config.json are relative to the config file).
+#
+#   sudo useradd --system --home /opt/zigbeemqttlink --shell /usr/sbin/nologin --groups dialout zigbeemqttlink
+#   sudo install -d -o zigbeemqttlink -g zigbeemqttlink -m 0750 /opt/zigbeemqttlink
+#   sudo install -m 0755 dist/zigbeemqttlink-linux-arm64 /opt/zigbeemqttlink/zigbeemqttlink
+#   sudo install -o zigbeemqttlink -m 0600 config.json device-definitions.json /opt/zigbeemqttlink/
+#   sudo cp deploy/zigbeemqttlink.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now zigbeemqttlink
+
 [Unit]
-Description=ZigbeeMQTTlink smart home Zigbee MQTT service
+Description=ZigbeeMQTTlink Zigbee to MQTT bridge (TI Z-Stack)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=zigbeemqttlink
+Group=zigbeemqttlink
 SupplementaryGroups=dialout
-WorkingDirectory=/opt
-ExecStart=/opt/zigbeemqttlink -config /etc/SmartHome/zigbeemqttlink.conf
+WorkingDirectory=/opt/zigbeemqttlink
+ExecStart=/opt/zigbeemqttlink/zigbeemqttlink -config /opt/zigbeemqttlink/config.json
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=40
 UMask=0077
+
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Database, definitions (saved from the web panel) and logs are written here.
 ReadWritePaths=/opt/zigbeemqttlink
-# Create user zigbeemqttlink; give it write access to the DB, definitions and logs.
-# Adjust ReadWritePaths if config points outside /opt/zigbeemqttlink.
-# The coordinator's serial device must be accessible via the dialout group.
+# PrivateDevices is deliberately not set: the coordinator node (/dev/ttyUSB*, /dev/ttyACM*,
+# /dev/serial/by-id/...) must stay accessible through the dialout group.
 
 [Install]
 WantedBy=multi-user.target

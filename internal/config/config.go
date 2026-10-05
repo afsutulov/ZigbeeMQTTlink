@@ -17,9 +17,12 @@ import (
 )
 
 type Config struct {
-	Version           int     `json:"version"`
-	Database          string  `json:"database"`
-	DeviceDefinitions string  `json:"device_definitions"`
+	Version           int    `json:"version"`
+	Database          string `json:"database"`
+	DeviceDefinitions string `json:"device_definitions"`
+	// CoordinatorBackup is the network backup file (network key, PAN IDs,
+	// device link keys) refreshed automatically; keep it private.
+	CoordinatorBackup string  `json:"coordinator_backup,omitempty"`
 	MQTT              MQTT    `json:"mqtt"`
 	Serial            Serial  `json:"serial"`
 	Web               Web     `json:"web"`
@@ -44,7 +47,21 @@ type Serial struct {
 type Web struct {
 	Enabled bool   `json:"enabled"`
 	Listen  string `json:"listen"`
+	// Optional HTTP Basic authentication for the admin panel and API.
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
 }
+
+// Loopback reports whether the panel listens only on the local host.
+func (w Web) Loopback() bool {
+	host, _, err := net.SplitHostPort(w.Listen)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return host == "localhost" || (ip != nil && ip.IsLoopback())
+}
+
 type Logging struct {
 	Level     string `json:"level"`
 	File      string `json:"file"`
@@ -58,6 +75,11 @@ var ieeePattern = regexp.MustCompile(`^0x[0-9a-f]{16}$`)
 func IEEE(s string) bool  { return ieeePattern.MatchString(s) }
 func Topic(s string) bool { return s != "" && len(s) <= 65535 && !strings.ContainsAny(s, "+#\x00") }
 func Name(s string) bool {
+	for _, part := range strings.Split(s, "/") {
+		if part == "set" || part == "get" {
+			return false
+		}
+	}
 	return Topic(s) && !strings.HasSuffix(s, "/set") && !strings.HasSuffix(s, "/get") && s != "bridge" && !strings.HasPrefix(s, "bridge/") && !strings.HasSuffix(s, "/") && !strings.HasPrefix(s, "/")
 }
 
@@ -122,7 +144,7 @@ func checkKeys(d *json.Decoder) error {
 	return err
 }
 func Load(path string) (Config, error) {
-	c := Config{Version: 1, Database: "devices.json", DeviceDefinitions: "device-definitions.json", MQTT: MQTT{Server: "mqtt://localhost:1883", BaseTopic: "zigbeemqttlink", ClientID: "zigbeemqttlink"}, Serial: Serial{Baudrate: 115200}, Web: Web{Enabled: true, Listen: "0.0.0.0:8080"}, Logging: Logging{Level: "info", File: "logs/zigbeemqttlink.log", Console: true, MaxSizeMB: 10, Backups: 3}}
+	c := Config{Version: 1, Database: "devices.json", DeviceDefinitions: "device-definitions.json", CoordinatorBackup: "coordinator_backup.json", MQTT: MQTT{Server: "mqtt://localhost:1883", BaseTopic: "zigbeemqttlink", ClientID: "zigbeemqttlink"}, Serial: Serial{Baudrate: 115200}, Web: Web{Enabled: true, Listen: "0.0.0.0:8080"}, Logging: Logging{Level: "info", File: "logs/zigbeemqttlink.log", Console: true, MaxSizeMB: 10, Backups: 3}}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return c, err
@@ -143,6 +165,7 @@ func Load(path string) (Config, error) {
 	c.Database = resolve(c.Database)
 	c.DeviceDefinitions = resolve(c.DeviceDefinitions)
 	c.Logging.File = resolve(c.Logging.File)
+	c.CoordinatorBackup = resolve(c.CoordinatorBackup)
 	c.MQTT.CA = resolve(c.MQTT.CA)
 	c.MQTT.Cert = resolve(c.MQTT.Cert)
 	c.MQTT.Key = resolve(c.MQTT.Key)
@@ -150,11 +173,31 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	if configPath == c.Database || configPath == c.DeviceDefinitions || configPath == c.Logging.File {
+	if configPath == c.Database || configPath == c.DeviceDefinitions || configPath == c.Logging.File || configPath == c.CoordinatorBackup {
 		return c, fmt.Errorf("database, definitions and log paths must differ from the main config")
 	}
 	if c.Serial.Port != "" && !strings.HasPrefix(c.Serial.Port, "tcp://") {
 		c.Serial.Port = resolve(c.Serial.Port)
+	}
+	paths := []string{configPath, c.Database, c.DeviceDefinitions, c.Logging.File, c.CoordinatorBackup}
+	for i, a := range paths {
+		for _, b := range paths[i+1:] {
+			if SamePath(a, b) {
+				return c, fmt.Errorf("configuration files must be distinct: %s and %s refer to the same file", a, b)
+			}
+		}
+	}
+	// TLS certificate and key may legitimately share a combined PEM file.
+	protected := []string{c.MQTT.CA, c.MQTT.Cert, c.MQTT.Key}
+	if !strings.HasPrefix(c.Serial.Port, "tcp://") {
+		protected = append(protected, c.Serial.Port)
+	}
+	for _, a := range paths {
+		for _, b := range protected {
+			if SamePath(a, b) {
+				return c, fmt.Errorf("project file %s overlaps protected input %s", a, b)
+			}
+		}
 	}
 	return c, c.Validate()
 }
@@ -168,6 +211,12 @@ func (c Config) Validate() error {
 	if c.Database == c.DeviceDefinitions || c.Database == c.Logging.File || c.DeviceDefinitions == c.Logging.File {
 		return fmt.Errorf("database, definitions and log paths must differ")
 	}
+	if c.CoordinatorBackup == "" {
+		return fmt.Errorf("coordinator_backup path must not be empty")
+	}
+	if c.CoordinatorBackup == c.Database || c.CoordinatorBackup == c.DeviceDefinitions || c.CoordinatorBackup == c.Logging.File {
+		return fmt.Errorf("coordinator_backup must differ from database, definitions and log paths")
+	}
 	if c.Serial.Port == "" || c.Serial.Baudrate <= 0 {
 		return fmt.Errorf("serial.port and positive baudrate are required (TI Z-Stack)")
 	}
@@ -176,6 +225,9 @@ func (c Config) Validate() error {
 	}
 	if _, err := c.MQTT.brokerURL(); err != nil {
 		return err
+	}
+	if c.MQTT.Password == "CHANGE_ME" {
+		return fmt.Errorf("replace the example mqtt.password CHANGE_ME")
 	}
 	if (c.MQTT.Cert == "") != (c.MQTT.Key == "") {
 		return fmt.Errorf("mqtt.cert and mqtt.key must be specified together")
@@ -188,6 +240,15 @@ func (c Config) Validate() error {
 		n, e := strconv.Atoi(port)
 		if e != nil || n < 1 || n > 65535 {
 			return fmt.Errorf("web.listen port must be 1..65535")
+		}
+		if (c.Web.User == "") != (c.Web.Password == "") {
+			return fmt.Errorf("web.user and web.password must be specified together")
+		}
+		if c.Web.Password == "CHANGE_ME" {
+			return fmt.Errorf("replace the example web.password CHANGE_ME")
+		}
+		if c.Web.Password == "" && !c.Web.Loopback() {
+			return fmt.Errorf("web.user/web.password required for a network listener; use loopback for unauthenticated access")
 		}
 	}
 	switch c.Logging.Level {

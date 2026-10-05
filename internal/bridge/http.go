@@ -2,14 +2,18 @@ package bridge
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"io"
+
 	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
+	"zigbeemqttlink/internal/config"
 )
 
 //go:embed web/index.html web/app.js
@@ -45,7 +49,6 @@ func (b *Bridge) HTTP() (*http.Server, error) {
 	mux.HandleFunc("GET /api/definitions", func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(b.definitions.Snapshot()) })
 	mux.HandleFunc("GET /api/admin", func(w http.ResponseWriter, r *http.Request) {
 		b.adminMu.Lock()
-		defer b.adminMu.Unlock()
 		devices := b.store.Devices()
 		states := map[string]any{}
 		channels := map[string]any{}
@@ -55,6 +58,7 @@ func (b *Bridge) HTTP() (*http.Server, error) {
 			channels[d.IEEE] = b.definitions.Channels(d)
 			definitions[d.IEEE] = b.definitions.Description(d)
 		}
+		b.adminMu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"version": Version, "health": b.Health(), "devices": devices, "states": states, "channels": channels, "definitions": definitions, "base_topic": b.cfg.MQTT.BaseTopic})
 	})
 	mux.HandleFunc("POST /api/request", func(w http.ResponseWriter, r *http.Request) {
@@ -78,17 +82,12 @@ func (b *Bridge) HTTP() (*http.Server, error) {
 			Request string         `json:"request"`
 			Data    map[string]any `json:"data"`
 		}
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&body); err != nil || body.Request == "" || body.Data == nil {
-			http.Error(w, "invalid request object", 400)
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+		if err != nil || config.StrictJSON(raw, &body) != nil || body.Request == "" || body.Data == nil {
+			http.Error(w, "invalid request object (unknown/duplicate fields or oversized body)", 400)
 			return
 		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			http.Error(w, "expected one JSON object", 400)
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		data, err := b.adminRequest(ctx, body.Request, body.Data)
 		if err != nil {
@@ -113,7 +112,19 @@ func (b *Bridge) HTTP() (*http.Server, error) {
 		p, _ := webAssets.ReadFile("web/index.html")
 		w.Write(p)
 	})
+	authUser := sha256.Sum256([]byte(b.cfg.Web.User))
+	authPass := sha256.Sum256([]byte(b.cfg.Web.Password))
+	needAuth := b.cfg.Web.Password != ""
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if needAuth && r.URL.Path != "/api/health" {
+			u, pw, ok := r.BasicAuth()
+			gotU, gotP := sha256.Sum256([]byte(u)), sha256.Sum256([]byte(pw))
+			if !ok || subtle.ConstantTimeCompare(gotU[:], authUser[:])&subtle.ConstantTimeCompare(gotP[:], authPass[:]) != 1 {
+				w.Header().Set("WWW-Authenticate", `Basic realm="ZigbeeMQTTlink", charset="UTF-8"`)
+				http.Error(w, "authentication required", http.StatusUnauthorized)
+				return
+			}
+		}
 		if local {
 			requestedHost := r.Host
 			if host, _, e := net.SplitHostPort(requestedHost); e == nil {
@@ -131,5 +142,5 @@ func (b *Bridge) HTTP() (*http.Server, error) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		mux.ServeHTTP(w, r)
 	})
-	return &http.Server{Addr: b.cfg.Web.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}, nil
+	return &http.Server{Addr: b.cfg.Web.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 40 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}, nil
 }

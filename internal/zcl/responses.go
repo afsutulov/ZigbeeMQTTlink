@@ -16,6 +16,22 @@ func CommandResponse(f Frame) (bool, error) {
 		}
 		return true, nil
 	}
+	if f.Command == 7 {
+		// Configure Reporting Response: one status byte on full success,
+		// otherwise status/direction/attribute records.
+		if len(f.Payload) == 1 && f.Payload[0] == 0 {
+			return true, nil
+		}
+		if len(f.Payload) == 0 || len(f.Payload)%4 != 0 {
+			return true, fmt.Errorf("malformed ZCL configure reporting response")
+		}
+		for p := f.Payload; len(p) > 0; p = p[4:] {
+			if p[0] != 0 {
+				return true, fmt.Errorf("ZCL reporting for attribute 0x%04x rejected, status 0x%02x", le.Uint16(p[2:4]), p[0])
+			}
+		}
+		return true, nil
+	}
 	if f.Command != 4 {
 		return false, nil
 	}

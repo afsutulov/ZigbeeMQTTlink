@@ -11,6 +11,9 @@ type diagnostics struct {
 	unsupportedExtended                                                atomic.Uint64
 	mqttCommands, retainedIgnored, rejectedCommands, transportAccepted atomic.Uint64
 	lastRadioEvent                                                     atomic.Int64
+	droppedEvents                                                      atomic.Uint64
+	recoveryDropped, recoveryReplayed                                  atomic.Uint64
+	framingErrors, panics, addressRecovered                            atomic.Uint64
 }
 
 func (d *diagnostics) snapshot() map[string]any {
@@ -30,5 +33,11 @@ func (d *diagnostics) snapshot() map[string]any {
 		"commands_rejected":                  d.rejectedCommands.Load(),
 		"device_commands_transport_accepted": d.transportAccepted.Load(),
 		"last_radio_event_unix":              d.lastRadioEvent.Load(),
+		"dropped_radio_events":               d.droppedEvents.Load(),
+		"znp_framing_errors":                 d.framingErrors.Load(),
+		"radio_event_panics":                 d.panics.Load(),
+		"address_recovery_frames_dropped":    d.recoveryDropped.Load(),
+		"address_recovery_frames_replayed":   d.recoveryReplayed.Load(),
+		"network_addresses_recovered":        d.addressRecovered.Load(),
 	}
 }

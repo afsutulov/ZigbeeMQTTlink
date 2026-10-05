@@ -249,7 +249,7 @@ func (r *Registry) Commands(d store.Device, input map[string]any, get bool) ([]z
 				c.Payload = append(c.Payload, data...)
 			}
 		}
-		if len(c.Payload) > 240 {
+		if len(zcl.Wire(c, 0)) > 240 {
 			return nil, fmt.Errorf("%s: payload too large", key)
 		}
 		byKey[key] = c

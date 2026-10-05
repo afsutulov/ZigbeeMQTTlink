@@ -2,6 +2,8 @@
 
 **English** · [Русский](README.ru.md)
 
+Version **0.3.3**. See [0.3.3 audit and corrections](REVIEW-0.3.3.ru.md), [0.3.2 audit](REVIEW-0.3.2.ru.md), [0.3.1 audit and corrections](REVIEW-0.3.1.ru.md), [network formation, backup and restore](REVIEW-0.3.0.ru.md), [0.2.5 audit and fixes](REVIEW-0.2.5.ru.md), [0.2.4 audit and fixes](REVIEW-0.2.4.ru.md), [0.2.3 audit and fixes](REVIEW-0.2.3.ru.md), [0.2.2 changes](REVIEW-0.2.2.ru.md) and [0.2.1 review](REVIEW.ru.md) for the production assessment, fixes, validation and deployment acceptance steps.
+
 A service connecting an existing Zigbee network to MQTT, with a built-in web interface, a JSON device database and device definitions that can be updated without recompiling.
 
 ZigbeeMQTTlink communicates directly with a **TI Z-Stack coordinator** over UART or TCP. Node.js and Zigbee2MQTT are not required at runtime. Your scripts consume device reports and issue commands through MQTT; automation rules remain in those scripts.
@@ -11,6 +13,7 @@ ZigbeeMQTTlink communicates directly with a **TI Z-Stack coordinator** over UART
 - [Features and scope](#features-and-scope)
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
+- [Zigbee network: formation, backup, restore](#zigbee-network-formation-backup-restore)
 - [Build from source](#build-from-source)
 - [Project layout](#project-layout)
 - [Configuration](#configuration)
@@ -37,8 +40,9 @@ ZigbeeMQTTlink communicates directly with a **TI Z-Stack coordinator** over UART
 - JSON Lines logs with configurable severity, file rotation and console output.
 - Existing MQTT names preserved when replacing hardware with a compatible device.
 - Retained MQTT commands ignored; transport acceptance is not reported as confirmed physical state.
+- New network formation, automatic and manual network backups, restore onto a replacement coordinator without re-pairing (Z-Stack 3.x; backup format compatible with Zigbee2MQTT).
 
-This version uses an **already initialized network**. Network formation/restoration, other coordinator protocols, OTA, groups/scenes and a complete binding/IAS enrollment workflow are not implemented. Home Assistant discovery is not included. There is no YAML configuration, database.db importer, simulator or test suite in the repository.
+Supported coordinators are TI Z-Stack 3.x (CC2652/CC1352, CC2530/CC2538 with Z-Stack 3.0.x); Z-Stack 1.2 (CC2531 legacy firmware) can run an existing network but cannot form, back up or restore one. Other coordinator protocols, OTA, groups/scenes and a complete binding/IAS enrollment workflow are not implemented. Home Assistant discovery is not included. There is no YAML configuration, database.db importer or simulator. Binding and reporting configuration are declared in model definitions (`bind`, `report`). Unit tests run with `make test`.
 
 JSON definitions extend the supported ZCL and Tuya datapoint formats. New proprietary handshakes, encrypted protocols, nested vendor payloads or coordinator protocols can require Go changes. An identical model ID does not guarantee identical behavior across manufacturers or firmware versions.
 
@@ -46,19 +50,19 @@ JSON definitions extend the supported ZCL and Tuya datapoint formats. New propri
 
 For running a release binary:
 
-- Linux AMD64 or ARM64.
+- Linux AMD64, ARM64 or ARMv7.
 - A TI Z-Stack coordinator with an existing Zigbee network.
 - UART access, such as `/dev/ttyUSB0`, or a TCP serial connection.
 - A reachable MQTT broker.
 - Write access to the directories containing the database, definitions and logs.
 
-For building: **Go 1.25.1 or newer**. Dependencies use Go modules and are not bundled in `vendor`. A first build needs access to the module download service unless dependencies are already cached. Release binaries do not download dependencies at runtime.
+Language/module minimum: **Go 1.25.0**. Release binaries are built and checked with **Go 1.26.8**; `go.mod` recommends this toolchain and Go may download it automatically. Use a supported Go release with current security patches for production builds. Dependencies use Go modules and are not bundled in `vendor`. A first build needs access to the module download service unless dependencies are already cached. Release binaries do not download dependencies at runtime.
 
 ## Quick start
 
 1. Extract the release archive or obtain the source and build it.
-2. Edit `config.json`: broker, credentials, coordinator port and file paths. Replace `CHANGE_ME` if using the supplied example credentials.
-3. For an existing installation, stop the previous process and preserve its working database as described below. The supplied `devices.json` is an **empty example**.
+2. Edit `config.json`: broker, credentials, coordinator port and file paths. Replace both `CHANGE_ME` passwords in the supplied configuration; startup and `-check-config` refuse placeholder credentials.
+3. For an existing installation, stop the previous process and preserve its working database as described below. The archive does not include your device database. If `database` points to a missing file, the service starts with an empty database and creates it on startup.
 4. Validate the files, then start:
 
 ```bash
@@ -68,7 +72,7 @@ chmod +x ./dist/zigbeemqttlink-linux-amd64
 ./dist/zigbeemqttlink-linux-amd64 -config ./config.json
 ```
 
-On ARM64 use `zigbeemqttlink-linux-arm64`. With the supplied web settings, open `http://SERVER_IP:8080`.
+On ARM64 use `zigbeemqttlink-linux-arm64`; on ARMv7 use `zigbeemqttlink-linux-armv7`. With the supplied web settings, open `http://SERVER_IP:8080`.
 
 `-check-config` does not open the radio or connect to MQTT. It prints the number of definitions and database devices. For migration, this count must match the working database. `devices=0` is expected only for a new empty database; it must not replace existing records.
 
@@ -79,6 +83,23 @@ The version 1 JSON format of the previous Go bridge's `native-state.json` is acc
 This compatibility applies to the Go bridge's JSON file, **not** Zigbee2MQTT's `database.db`. The importer has been removed. Do not run two processes against the same coordinator, even with different database files.
 
 The supplied configuration retains `mqtt.base_topic: "zigbee2mqtt"` for existing scripts. This is an MQTT namespace, not a runtime dependency. To use `zigbeemqttlink`, update both the configuration and scripts' subscriptions/publications. The MQTT client ID and default log filename use the new project name.
+
+## Zigbee network: formation, backup, restore
+
+Network parameters (channel, PAN ID, extended PAN ID, network key, device link keys) live in the coordinator NV memory, not in project files. Since 0.3.0 they can be created, saved to a file and moved to another coordinator. The commands run with the service **stopped** (the database lock prevents another instance using the same database; it does not lock other applications or configurations using another database) and exit when done.
+
+| Flag | Action |
+|---|---|
+| `-form-network [-channel N]` | Creates a new network with a random network key, PAN ID and extended PAN ID. Channel 11–26, default 15 (15, 20, 25 overlap least with Wi-Fi). |
+| `-backup <file>` | Saves the network to a file. Read-only for the coordinator. |
+| `-restore <file>` | Writes a network backup to the coordinator; devices keep working without re-pairing. |
+| `-force` | Allows replacing an existing network or a backup file of another network. |
+
+New network: flash Z-Stack 3.x, configure, run `-form-network`, start the service and pair devices with `permit_join`. Replacement coordinator: run `-restore <file>` on the new stick; the coordinator IEEE, network key, PAN IDs, channel, device table and link keys are copied and frame counters are advanced by 2500 above the larger value from the supplied backup and readable matching coordinator/local backup. A very old backup on a new stick can still be below counters remembered by devices; use the freshest backup available. Never power the old coordinator again near the network. Zigbee2MQTT `coordinator_backup.json` files (`zigpy/open-coordinator-backup`) restore directly; the legacy `adapterType` format is not supported.
+
+Before a restore writes to the coordinator, the exact input is kept in a private `coordinator_backup-restore-source-*.json` file. Device address/missing-entry differences are warnings, but counter rollback for a surviving unchanged key blocks completion. `-force` explicitly allows replacement when the current snapshot cannot be decoded; it cannot guarantee recovery of unknown latest counters.
+
+The running service refreshes the backup one minute after start and daily into `coordinator_backup` (default `coordinator_backup.json` next to the config). Link-keyed devices missing from coordinator tables but still paired are carried over from the previous backup. Formation/restore refuse to replace an existing network without `-force`; with `-force` the current network is backed up first. Restore refuses a database of another coordinator unless `-force` is explicitly used. A backup of another network is never overwritten. Invalid existing backup files are left untouched by automatic backups; manual replacement preserves them under a unique name. Backup files are mode `0600` and **contain the network key**.
 
 ## Build from source
 
@@ -96,7 +117,7 @@ For development: `go run -buildvcs=false . -config ./config.json`. The build opt
 | Command | Result |
 |---|---|
 | `make build` | Local static binary: `dist/zigbeemqttlink` |
-| `make release` | Static Linux AMD64/ARM64 binaries and `dist/SHA256SUMS` |
+| `make release` | Static Linux AMD64/ARM64/ARMv7 binaries and `dist/SHA256SUMS` |
 | `make vet` | Go static analysis |
 
 Cross-compilation without Make:
@@ -113,6 +134,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflag
 | Path | Purpose |
 |---|---|
 | `main.go` | Root entry point: CLI, startup and shutdown |
+| `maintenance.go` | `-form-network`, `-backup`, `-restore` commands and the daily network backup |
 | `go.mod`, `go.sum` | Dependencies and checksums |
 | `config.json` | Main service configuration |
 | `devices.json` | Identities, endpoints, options and cached state |
@@ -120,12 +142,23 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflag
 | `internal/config` | Strict JSON configuration and MQTT/TLS settings |
 | `internal/store` | Atomic database writes and administration |
 | `internal/device` | Runtime device-definition registry |
-| `internal/znp` | TI ZNP transport and adapter |
+| `internal/znp` | TI ZNP transport and adapter; NV memory, network formation, backup and restore |
 | `internal/zcl` | ZCL parsing and specialized converters |
 | `internal/bridge` | MQTT, HTTP and embedded web assets |
 | `internal/logging` | JSON logging and rotation |
 | `examples/*.definition.json` | Model-definition examples |
-| `zigbeemqttlink.service.example` | Example systemd unit |
+| `deploy/zigbeemqttlink.service` | systemd unit |
+| `Makefile` | Build, release binaries, tests |
+| `CHANGES.ru.md` | Previous review notes for 0.2.0 (Russian) |
+| `REVIEW-0.3.3.ru.md` | Current audit: forced recovery, link-key counter safety, preserved restore sources (Russian) |
+| `REVIEW-0.3.2.ru.md` | 0.3.2 audit: completing interrupted restores, device-table verification (Russian) |
+| `REVIEW-0.3.1.ru.md` | 0.3.1 audit: restore safety, counter validation, file protection (Russian) |
+| `REVIEW-0.3.0.ru.md` | Network formation, backup and restore: design, verification, acceptance (Russian) |
+| `REVIEW-0.2.5.ru.md` | 0.2.5 assessment, retry provenance and timing fixes |
+| `REVIEW-0.2.4.ru.md` | Previous assessment of 0.2.3, fixes and verification (Russian) |
+| `REVIEW-0.2.3.ru.md` | 0.2.3 assessment, recovery fixes and verification (Russian) |
+| `REVIEW-0.2.2.ru.md` | 0.2.2 audit of 0.2.1, fixes and verification (Russian) |
+| `REVIEW.ru.md` | Independent 0.2.1 review, fixes and deployment acceptance (Russian) |
 | `dist` | Release binaries and checksums |
 | `README.md`, `README.ru.md` | English and Russian documentation |
 | `LICENSE` | GPL-3.0 license text |
@@ -139,13 +172,14 @@ Example main configuration; adapt credentials and paths to your installation:
   "version": 1,
   "database": "devices.json",
   "device_definitions": "device-definitions.json",
+  "coordinator_backup": "coordinator_backup.json",
   "mqtt": {
     "server": "mqtt://localhost:1883",
     "base_topic": "zigbee2mqtt",
     "client_id": "zigbeemqttlink"
   },
   "serial": {"port": "/dev/ttyUSB0", "baudrate": 115200},
-  "web": {"enabled": true, "listen": "0.0.0.0:8080"},
+  "web": {"enabled": true, "listen": "0.0.0.0:8080", "user": "admin", "password": "CHANGE_ME"},
   "logging": {
     "level": "info",
     "file": "logs/zigbeemqttlink.log",
@@ -161,6 +195,7 @@ Example main configuration; adapt credentials and paths to your installation:
 | `version` | Schema version: `1` |
 | `database` | Exact path to the separate device JSON file |
 | `device_definitions` | Runtime model-definition file |
+| `coordinator_backup` | Optional. Automatic network backup file (default `coordinator_backup.json`); contains the network key |
 | `mqtt.server` | `mqtt://HOST[:PORT]` or `mqtts://HOST[:PORT]`; `tcp`/`ssl` aliases accepted |
 | `mqtt.base_topic` | Namespace used by scripts and the bridge |
 | `mqtt.client_id` | Unique client ID |
@@ -172,6 +207,7 @@ Example main configuration; adapt credentials and paths to your installation:
 | `serial.port` | UART path or `tcp://HOST:PORT` for a TI Z-Stack serial connection |
 | `serial.baudrate` | UART baud rate, commonly `115200` |
 | `web.enabled`, `web.listen` | HTTP enable switch and bind address/port |
+| `web.user`, `web.password` | HTTP Basic authentication for the panel and API (set both); required for a network listener. `/api/health` stays open for monitoring |
 | `logging.level` | `debug`, `info`, `warn`, `error` |
 | `logging.file`, `logging.console` | File path and/or stderr output |
 | `logging.max_size_mb`, `logging.backups` | Rotation threshold and backup count |
@@ -289,7 +325,7 @@ Device command errors are logged. Administrative requests receive a response top
 
 The embedded web UI needs no separate assets or Node.js build. It offers device/state inspection, commands, calibration, rename/remove/replace, configuration, timed pairing and the definition JSON editor.
 
-Web has **no authentication** and is intended for a trusted internal network. Main `config.json` is edited on disk. The web editor edits device definitions; device options are stored in the database. JSON/origin/host checks remain for HTTP mutations.
+The panel uses **HTTP Basic authentication** configured by `web.user`/`web.password`. Authentication is mandatory for non-loopback listeners; unauthenticated access is allowed only on loopback. The literal example password `CHANGE_ME` is refused. Basic authentication over plain HTTP does not encrypt credentials; if the network is not trusted, put the panel behind an HTTPS reverse proxy. Main `config.json` is edited on disk. The web editor edits device definitions; device options are stored in the database. JSON/origin/host checks remain for HTTP mutations.
 
 | Endpoint | Purpose |
 |---|---|
@@ -473,12 +509,12 @@ Rotation occurs before the next full record exceeds the threshold; a single over
 
 ## Running with systemd
 
-Adapt [zigbeemqttlink.service.example](zigbeemqttlink.service.example). It expects `/opt/zigbeemqttlink`, user `zigbeemqttlink` and UART access via `dialout`. Create the user and grant access to database/definitions/log directories first. Keep the binary and credentials under appropriate ownership.
+Adapt [deploy/zigbeemqttlink.service](deploy/zigbeemqttlink.service). It expects `/opt/zigbeemqttlink`, user `zigbeemqttlink` and UART access via `dialout`. Create the user and grant access to database/definitions/log directories first. Keep the binary and credentials under appropriate ownership.
 
-Update `ReadWritePaths` for custom data paths. On ARM64 change `ExecStart`. After preparation:
+Install the binary for your architecture as `/opt/zigbeemqttlink/zigbeemqttlink` (see the comment at the top of the unit). Update `ReadWritePaths` only for data paths outside `/opt/zigbeemqttlink`. Then:
 
 ```bash
-sudo cp zigbeemqttlink.service.example /etc/systemd/system/zigbeemqttlink.service
+sudo cp deploy/zigbeemqttlink.service /etc/systemd/system/zigbeemqttlink.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now zigbeemqttlink.service
 sudo systemctl status zigbeemqttlink.service
@@ -508,7 +544,7 @@ Health/counters distinguish received frames, converted/published reports, MQTT c
 
 Internal packages separate transport, parsing, persistence, model definitions, logging and MQTT/HTTP orchestration. `main.go` is the root entry point. Add routine mappings in JSON; extend Go for new protocol primitives or specialized converters.
 
-The repository intentionally contains no tests/simulator. Build, run static analysis and validate configuration:
+There is no coordinator simulator; unit tests cover the ZNP transport, ZCL/Tuya parsing, the database, definitions, HTTP auth and announce/report handling (`make check`). Build, run static analysis and validate configuration:
 
 ```bash
 go vet -buildvcs=false ./...
@@ -533,3 +569,21 @@ Studied sources:
 This includes ZNP/AF/ZDO/ZCL formats, Lumi/Aqara binary attributes/channels, Tuya DP, NEO mappings and TS011F fingerprints/scaling. TypeScript converters are not executed at runtime.
 
 Direct dependencies: [Eclipse Paho MQTT](https://github.com/eclipse/paho.mqtt.golang), [go.bug.st/serial](https://github.com/bugst/go-serial), [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys). Exact versions and indirect modules are recorded in `go.mod`/`go.sum`.
+
+## Runtime behavior (0.2.1–0.2.5)
+
+Incoming radio reports do not wait for MQTT acknowledgements or database writes. Logging remains synchronous. MQTT reports have a bounded 256-entry queue. Command intake and the scheduler backlog each hold 128 jobs; three independent device jobs execute concurrently. MQTT commands for the same IEEE execute in reception order; HTTP operations on that device cannot interleave the frames of a compound command. A queued MQTT job expires 30 seconds after reception; individual MQTT radio operations normally have a 10-second deadline. HTTP operations have a 30-second deadline. Timeouts are not rolled back and may mean that part of a compound command has already reached the device. After ambiguity, inspect a fresh report rather than retrying `TOGGLE` blindly.
+
+The adapter permits four AF requests in flight. Protocol replies have two separate workers. At least one AF slot is available to replies when the three MQTT jobs occupy the other slots; concurrent direct HTTP requests can also consume slots. Queue saturation and publication failure are reported in logs and diagnostics. This is bounded backpressure, not guaranteed event delivery. When MQTT is disconnected, current device state continues updating locally; latest retained state is replayed on reconnect, but past button/leak events are not a durable event journal. Automation scripts must check report timestamps and provide their own delivery/timeout handling.
+
+MQTT `SUBACK` rejection keeps readiness false and is retried. The Go module requires no YAML, Home Assistant discovery, vendor directory or database.db converter. The tests included in the revised input archive are retained and extended for regression coverage. Names may contain `/`, but path components `set`/`get` are reserved for commands; channel names cannot contain `/`.
+
+Obsolete retained topics from rename/remove/replace are recorded in the optional `retained_cleanup` database field and cleared after reconnect before live states are replayed. Preserve the configured MQTT base topic while pending cleanup exists. The runtime performs periodic saves off the radio event loop.
+
+Since 0.2.2: a frame from an unknown short address triggers a rate-limited `ZDO_IEEE_ADDR_REQ` (at most once per address per 2 minutes); a `ZDO_TC_DEV_IND` updates the address directly. Only already paired devices are updated this way; new devices still require `permit_join` and an announce. A device announce changes only the address and `last_seen` of an existing record, so it cannot revert a concurrent rename/options edit/interview. ZNP frames with an impossible length byte are discarded and the reader resynchronises instead of restarting the service (`znp_framing_errors`). A panic while converting one radio frame skips that frame (`radio_event_panics`) instead of stopping the service. Recovered addresses are counted in `network_addresses_recovered`.
+
+Since 0.2.3, address recovery buffers up to 8 frames per address (256 total) and reprocesses them after confirming an already paired IEEE within 30 seconds. Newer announcements or a device removal invalidate an old lookup. Invalid length is checked before reading command bytes, preserving the next valid frame. The buffer is not durable; MQTT outages and process restarts can still lose events. See the latest audit for limits and deployment acceptance.
+
+Since 0.2.4, a failed or late IEEE lookup keeps the buffered reports (still limited to 30 seconds each). The next frame from that address, typically sent while a sleeping device is awake, starts a new lookup after 15 seconds and both reports are replayed in order. After an applied, superseded or unpaired-IEEE result the address is not queried again for 2 minutes. A length byte of `0xFE` is treated as the start of the next frame, so a stray `0xFE` before a real frame no longer loses that frame.
+
+Since 0.2.5, buffered frames cannot cross an address/membership generation change on retry. Lookup results require the entire address snapshot to remain unchanged; known-IEEE trust-center indications still update directly. The 15-second retry interval is measured from the previous attempt start. This conservative check may discard reports after an unrelated announce; it avoids assigning old reports to a different device. It does not guarantee event delivery across failures.

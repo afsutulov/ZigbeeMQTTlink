@@ -1,0 +1,41 @@
+{
+  "id": "example_zcl_metering_plug",
+  "description": "state: ON/OFF/TOGGLE; power and voltage (raw device units; add scale if the plug uses a divisor) are reported automatically after pairing (bind + configure reporting).",
+  "models": [
+    "YOUR_MODEL_ID"
+  ],
+  "protocol": "zcl",
+  "endpoint": 1,
+  "properties": {
+    "state": {
+      "type": "enum",
+      "access": "rw",
+      "cluster": 6,
+      "attribute": 0,
+      "wire_type": 16,
+      "values": {"OFF": 0, "ON": 1},
+      "command_ids": {"OFF": 0, "ON": 1, "TOGGLE": 2}
+    },
+    "power": {
+      "type": "number",
+      "access": "r",
+      "cluster": 2820,
+      "attribute": 1291,
+      "wire_type": 41
+    },
+    "voltage": {
+      "type": "number",
+      "access": "r",
+      "cluster": 2820,
+      "attribute": 1285,
+      "wire_type": 33
+    }
+  },
+  "configure": [
+    {"kind": "bind", "cluster": 6},
+    {"kind": "bind", "cluster": 2820},
+    {"kind": "report", "cluster": 6, "attribute": 0, "wire_type": 16, "min_interval": 0, "max_interval": 3600},
+    {"kind": "report", "cluster": 2820, "attribute": 1291, "wire_type": 41, "min_interval": 5, "max_interval": 300, "change": 5},
+    {"kind": "report", "cluster": 2820, "attribute": 1285, "wire_type": 33, "min_interval": 10, "max_interval": 600, "change": 2}
+  ]
+}
