@@ -18,14 +18,14 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=zigbeemqttlink
-Group=zigbeemqttlink
 SupplementaryGroups=dialout
-WorkingDirectory=/opt/zigbeemqttlink
-ExecStart=/opt/zigbeemqttlink/zigbeemqttlink -config /opt/zigbeemqttlink/config.json
+WorkingDirectory=/opt
+ExecStart=/opt/zigbeemqttlink -config /etc/SmartHome/zigbeemqttlink.conf
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=40
 UMask=0077
+LogsDirectory=SmartHome
 
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -37,7 +37,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 # Database, definitions (saved from the web panel) and logs are written here.
-ReadWritePaths=/opt/zigbeemqttlink
+ReadWritePaths=/etc/SmartHome
 # PrivateDevices is deliberately not set: the coordinator node (/dev/ttyUSB*, /dev/ttyACM*,
 # /dev/serial/by-id/...) must stay accessible through the dialout group.
 

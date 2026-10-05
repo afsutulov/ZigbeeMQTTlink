@@ -1,5 +1,0 @@
-{"time":"2026-10-04T22:20:49.426844598+05:00","level":"INFO","msg":"ZigbeeMQTTlink starting","version":"0.1.1","database":"/home/as/ZigbeeMQTTlink/devices.json","definitions":8,"log_level":"info"}
-{"time":"2026-10-04T22:20:49.480385311+05:00","level":"INFO","msg":"existing network ready","coordinator":"0x00124b0024c1f070","pan_id":6754,"channel":11}
-{"time":"2026-10-04T22:20:49.503310782+05:00","level":"INFO","msg":"HTTP listening","address":"0.0.0.0:8080"}
-{"time":"2026-10-04T22:20:49.506935775+05:00","level":"INFO","msg":"ZigbeeMQTTlink stopped"}
-{"time":"2026-10-04T22:20:49.507695646+05:00","level":"ERROR","msg":"stopped","error":"not Authorized"}
